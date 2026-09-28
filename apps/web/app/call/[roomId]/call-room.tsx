@@ -25,6 +25,13 @@ function assertNever(x: never): never {
   throw new Error(`처리하지 않은 이벤트: ${JSON.stringify(x)}`);
 }
 
+function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 type GateState = "idle" | "requesting" | "denied" | "no-device";
 
 // Tailwind Preflight가 버튼 기본 배경·테두리를 지우므로 명시적으로 준다.
@@ -154,6 +161,7 @@ function ActiveCall({
   const socketRef = useRef<WebSocket | null>(null);
   const startedAtRef = useRef(0);
   const remotePeerIdRef = useRef<PeerId | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
 
@@ -186,6 +194,12 @@ function ActiveCall({
       console.log(`[연결 소요] ${elapsedSec.toFixed(2)}s`);
     }
   }, [state]);
+
+  useEffect(() => {
+    if (state.status !== "connected") return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -428,10 +442,41 @@ function ActiveCall({
           }}
         />
       </div>
+      {state.status === "connected" && (
+        // 상단 상태 바 — 통화 시간(Design.md 12.2, 좌측)
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            left: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: "rgba(28,24,48,0.6)",
+            backdropFilter: "blur(8px)",
+            borderRadius: 999, // radius-full
+            padding: "6px 12px",
+            color: "#FFFFFF",
+            fontSize: 13, // caption
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#2FAE6B", // --color-success(아이콘 값)
+              display: "inline-block",
+            }}
+          />
+          {formatDuration(now - state.connectedAt)}
+        </div>
+      )}
       <div
         style={{
           position: "fixed",
-          top: 16,
+          top: state.status === "connected" ? 56 : 16,
           left: 16,
           color: "#FFFFFF",
           fontSize: 14,
