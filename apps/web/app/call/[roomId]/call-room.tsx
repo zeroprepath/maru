@@ -1,7 +1,12 @@
 "use client";
 import { CallState } from "@/entities/call/model";
 import { useCallStore } from "@/entities/call/model/store";
-import { ClientToServer, RoomId, ServerToClient } from "@maru/shared-types";
+import {
+  ClientToServer,
+  PeerId,
+  RoomId,
+  ServerToClient,
+} from "@maru/shared-types";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -148,6 +153,7 @@ function ActiveCall({
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const startedAtRef = useRef(0);
+  const remotePeerIdRef = useRef<PeerId | null>(null);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
 
@@ -155,6 +161,7 @@ function ActiveCall({
     stream.getTracks().forEach((t) => t.stop()); // 하드웨어 반납
     pcRef.current?.close();
     socketRef.current?.close();
+    dispatch({ type: "LEAVE" });
     const duration = Math.round((Date.now() - startedAtRef.current) / 1000);
     router.push(`/call/${roomId}/ended?duration=${duration}`);
   }
@@ -200,6 +207,7 @@ function ActiveCall({
       pcRef.current = pc;
       socketRef.current = socket;
       startedAtRef.current = Date.now();
+      dispatch({ type: "JOIN", roomId });
 
       const send = (msg: ClientToServer) => socket.send(JSON.stringify(msg));
 
@@ -230,6 +238,12 @@ function ActiveCall({
       pc.onconnectionstatechange = () => {
         switch (pc.connectionState) {
           case "connected":
+            if (remotePeerIdRef.current) {
+              dispatch({
+                type: "PEER_CONNECTED",
+                peerId: remotePeerIdRef.current,
+              });
+            }
             return;
           case "disconnected":
             dispatch({ type: "DISCONNECTED" });
@@ -255,12 +269,15 @@ function ActiveCall({
               setStatus("상대를 기다리는 중...");
               return;
             }
+            remotePeerIdRef.current = msg.peers[0] ?? null;
             setStatus("연결 중...");
             return makeOffer();
           case "peer-joined":
+            remotePeerIdRef.current = msg.peerId;
             setStatus("상대가 들어왔습니다.");
             return;
           case "offer":
+            remotePeerIdRef.current = msg.from;
             await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
             await pc.setLocalDescription(await pc.createAnswer());
             send({
