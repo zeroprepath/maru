@@ -304,6 +304,25 @@ function ActiveCall({
         pc.addTrack(track, stream);
       }
 
+      // 코덱은 기기 목록으로 분기하지 않고, 그 브라우저가 신고하는 capabilities 중
+      // 하드웨어 가속되는 쪽(H.264)을 우선한다 — 없으면 자동으로 다음 순위로 폴백된다(ADR-022).
+      const videoTransceiver = pc
+        .getTransceivers()
+        .find((t) => t.sender.track?.kind === "video");
+      const videoCodecs = RTCRtpSender.getCapabilities("video")?.codecs ?? [];
+      if (videoTransceiver && videoCodecs.length > 0) {
+        const h264 = videoCodecs.filter((c) => c.mimeType === "video/H264");
+        const rest = videoCodecs.filter((c) => c.mimeType !== "video/H264");
+        videoTransceiver.setCodecPreferences([...h264, ...rest]);
+      }
+
+      const videoSender = pc.getSenders().find((s) => s.track?.kind === "video");
+      if (videoSender) {
+        const params = videoSender.getParameters();
+        params.degradationPreference = "maintain-framerate";
+        videoSender.setParameters(params).catch(() => {});
+      }
+
       const join = () => send({ type: "join-room", roomId });
       if (socket.readyState === WebSocket.OPEN) {
         join();
