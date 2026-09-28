@@ -181,6 +181,13 @@ function ActiveCall({
   }
 
   useEffect(() => {
+    if (state.status === "connected") {
+      const elapsedSec = (state.connectedAt - startedAtRef.current) / 1000;
+      console.log(`[연결 소요] ${elapsedSec.toFixed(2)}s`);
+    }
+  }, [state]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function start() {
