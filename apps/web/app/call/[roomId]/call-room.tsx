@@ -165,13 +165,17 @@ function ActiveCall({
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
 
-  function handleEnd() {
+  function endCall(reason: "LEAVE" | "PEER_LEFT") {
     stream.getTracks().forEach((t) => t.stop()); // 하드웨어 반납
     pcRef.current?.close();
     socketRef.current?.close();
-    dispatch({ type: "LEAVE" });
+    dispatch({ type: reason });
     const duration = Math.round((Date.now() - startedAtRef.current) / 1000);
     router.push(`/call/${roomId}/ended?duration=${duration}`);
+  }
+
+  function handleEnd() {
+    endCall("LEAVE");
   }
 
   function toggleMic() {
@@ -314,10 +318,7 @@ function ActiveCall({
             await pc.addIceCandidate(msg.candidate);
             return;
           case "peer-left":
-            setStatus("상대가 나갔습니다.");
-            if (remoteVideo.current) {
-              remoteVideo.current.srcObject = null;
-            }
+            endCall("PEER_LEFT");
             return;
           case "error":
             setStatus(`오류: ${msg.code}`);
