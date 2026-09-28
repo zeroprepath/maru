@@ -169,8 +169,13 @@ function ActiveCall({
     stream.getTracks().forEach((t) => t.stop()); // 하드웨어 반납
     pcRef.current?.close();
     socketRef.current?.close();
+    // 대기실 승인을 기다린 시간까지 포함되지 않도록, "연결 시도 시작"(startedAtRef)이
+    // 아니라 실제로 P2P가 붙은 시각(state.connectedAt)을 기준으로 잰다 — 이 값은
+    // 양쪽에서 거의 동시(수십~수백ms 오차)라 호스트·게스트 표시값이 서로 어긋나지 않는다.
+    const connectedAt =
+      state.status === "connected" ? state.connectedAt : startedAtRef.current;
     dispatch({ type: reason });
-    const duration = Math.round((Date.now() - startedAtRef.current) / 1000);
+    const duration = Math.round((Date.now() - connectedAt) / 1000);
     router.push(`/call/${roomId}/ended?duration=${duration}`);
   }
 
