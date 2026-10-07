@@ -7,6 +7,7 @@ services:
       - PORT=3001
       - TURN_SECRET=${TURN_SECRET}
       - TURN_HOST=${DOMAIN}
+      - GUEST_TOKEN_SECRET=${GUEST_TOKEN_SECRET}
     restart: unless-stopped
 
   coturn:

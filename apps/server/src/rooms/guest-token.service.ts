@@ -8,7 +8,17 @@ export interface GuestTokenPayload {
   jti: string;
 }
 
-const SECRET = process.env.GUEST_TOKEN_SECRET ?? 'dev-only-secret';
+const SECRET = resolveSecret();
+
+function resolveSecret(): string {
+  const fromEnv = process.env.GUEST_TOKEN_SECRET;
+  if (fromEnv) return fromEnv;
+  // 소스에 적힌 기본값은 공개 저장소에서 누구나 볼 수 있으므로 운영에선 쓰지 않는다
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('GUEST_TOKEN_SECRET 환경변수가 필요합니다.');
+  }
+  return 'dev-only-secret';
+}
 
 @Injectable()
 export class GuestTokenService {
