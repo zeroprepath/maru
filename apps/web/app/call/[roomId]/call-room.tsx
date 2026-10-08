@@ -198,13 +198,6 @@ function ActiveCall({
   }
 
   useEffect(() => {
-    if (state.status === "connected") {
-      const elapsedSec = (state.connectedAt - startedAtRef.current) / 1000;
-      console.log(`[연결 소요] ${elapsedSec.toFixed(2)}s`);
-    }
-  }, [state]);
-
-  useEffect(() => {
     if (state.status !== "connected") return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -360,7 +353,9 @@ function ActiveCall({
         videoTransceiver.setCodecPreferences([...h264, ...rest]);
       }
 
-      const videoSender = pc.getSenders().find((s) => s.track?.kind === "video");
+      const videoSender = pc
+        .getSenders()
+        .find((s) => s.track?.kind === "video");
       if (videoSender) {
         const params = videoSender.getParameters();
         params.degradationPreference = "maintain-framerate";
