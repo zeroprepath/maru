@@ -31,6 +31,7 @@
 | 교차 네트워크 relay 연결 | ✅ Mac Wi-Fi + iPhone 셀룰러 5/5 성공 |
 | 통화 1분 서버 송신량 | ✅ 14.89MB (견적 15MB 대비 -0.75%, n=1) |
 | ADR | ✅ 008·017·018·022 `채택됨` (017은 구성만 확정, 크레딧 종료 후 공급자는 보류) |
+| Vercel Production 통화 | ✅ 환경변수(`NEXT_PUBLIC_WS_URL`·`API_URL`·`FORCE_RELAY`)를 Production에도 설정하고 재배포 후 통화 확인 (2026-10-08) — Preview와 Production의 환경변수는 따로다 |
 | 알려진 한계 | 신고·제재 미구현(Phase 4), EC2 `t3.micro` 1GB(Phase 2 DB·Redis 전 메모리 증설 + Elastic IP 먼저), iPhone 발열은 코덱 원인으로 단정하지 않음(가설) |
 
 ## Phase 2에서 처리할 미결 사항
