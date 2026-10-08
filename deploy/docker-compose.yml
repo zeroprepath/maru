@@ -5,8 +5,9 @@ services:
       dockerfile: apps/server/Dockerfile
     environment:
       - PORT=3001
-      - TURN_SECRET=${TURN_SECRET}
+      - TURN_SECRET=${TURN_SECRET:?deploy/.env에 TURN_SECRET이 필요합니다}
       - TURN_HOST=${DOMAIN}
+      - GUEST_TOKEN_SECRET=${GUEST_TOKEN_SECRET:?deploy/.env에 GUEST_TOKEN_SECRET이 필요합니다}
     restart: unless-stopped
 
   coturn:

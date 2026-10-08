@@ -1,7 +1,12 @@
 "use client";
 import { CallState } from "@/entities/call/model";
 import { useCallStore } from "@/entities/call/model/store";
-import { ClientToServer, RoomId, ServerToClient } from "@maru/shared-types";
+import {
+  ClientToServer,
+  PeerId,
+  RoomId,
+  ServerToClient,
+} from "@maru/shared-types";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -18,6 +23,13 @@ interface TurnCredentials {
 
 function assertNever(x: never): never {
   throw new Error(`처리하지 않은 이벤트: ${JSON.stringify(x)}`);
+}
+
+function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 type GateState = "idle" | "requesting" | "denied" | "no-device";
@@ -147,16 +159,27 @@ function ActiveCall({
   const { state, dispatch } = useCallStore();
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const startedAtRef = useRef(0);
+  const remotePeerIdRef = useRef<PeerId | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
 
-  function handleEnd() {
+  function endCall(reason: "LEAVE" | "PEER_LEFT") {
     stream.getTracks().forEach((t) => t.stop()); // 하드웨어 반납
     pcRef.current?.close();
     socketRef.current?.close();
-    const duration = Math.round((Date.now() - startedAtRef.current) / 1000);
+    dispatch({ type: reason });
+    // 이 함수는 소켓 메시지 핸들러(첫 렌더의 effect)에서도 불리므로 렌더 시점의
+    // state 스냅샷은 오래됐을 수 있다 — 스토어의 최신 값에서 읽는다. durationMs는
+    // reduce()가 실제로 P2P가 붙은 시각(connectedAt) 기준으로 계산해 두 쪽이 일치한다.
+    const ended = useCallStore.getState().state;
+    const duration =
+      ended.status === "ended" ? Math.round(ended.durationMs / 1000) : 0;
     router.push(`/call/${roomId}/ended?duration=${duration}`);
+  }
+
+  function handleEnd() {
+    endCall("LEAVE");
   }
 
   function toggleMic() {
@@ -172,6 +195,12 @@ function ActiveCall({
     track.enabled = !track.enabled;
     setCameraOn(track.enabled);
   }
+
+  useEffect(() => {
+    if (state.status !== "connected") return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,7 +228,7 @@ function ActiveCall({
       const socket = new WebSocket(WS_URL);
       pcRef.current = pc;
       socketRef.current = socket;
-      startedAtRef.current = Date.now();
+      dispatch({ type: "JOIN", roomId });
 
       const send = (msg: ClientToServer) => socket.send(JSON.stringify(msg));
 
@@ -230,6 +259,12 @@ function ActiveCall({
       pc.onconnectionstatechange = () => {
         switch (pc.connectionState) {
           case "connected":
+            if (remotePeerIdRef.current) {
+              dispatch({
+                type: "PEER_CONNECTED",
+                peerId: remotePeerIdRef.current,
+              });
+            }
             return;
           case "disconnected":
             dispatch({ type: "DISCONNECTED" });
@@ -255,12 +290,15 @@ function ActiveCall({
               setStatus("상대를 기다리는 중...");
               return;
             }
+            remotePeerIdRef.current = msg.peers[0] ?? null;
             setStatus("연결 중...");
             return makeOffer();
           case "peer-joined":
+            remotePeerIdRef.current = msg.peerId;
             setStatus("상대가 들어왔습니다.");
             return;
           case "offer":
+            remotePeerIdRef.current = msg.from;
             await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
             await pc.setLocalDescription(await pc.createAnswer());
             send({
@@ -276,10 +314,7 @@ function ActiveCall({
             await pc.addIceCandidate(msg.candidate);
             return;
           case "peer-left":
-            setStatus("상대가 나갔습니다.");
-            if (remoteVideo.current) {
-              remoteVideo.current.srcObject = null;
-            }
+            endCall("PEER_LEFT");
             return;
           case "error":
             setStatus(`오류: ${msg.code}`);
@@ -302,6 +337,33 @@ function ActiveCall({
 
       for (const track of stream.getTracks()) {
         pc.addTrack(track, stream);
+      }
+
+      // 코덱은 기기 목록으로 분기하지 않고, 그 브라우저가 신고하는 capabilities 중
+      // 하드웨어 가속되는 쪽(H.264)을 우선한다 — 없으면 자동으로 다음 순위로 폴백된다(ADR-022).
+      // 최적화일 뿐이라 브라우저가 거부해도 기본 협상으로 계속한다(예외로 통화가 안 열리면 안 된다).
+      try {
+        const videoTransceiver = pc
+          .getTransceivers()
+          .find((t) => t.sender.track?.kind === "video");
+        const videoCodecs =
+          RTCRtpSender.getCapabilities("video")?.codecs ?? [];
+        if (videoTransceiver && videoCodecs.length > 0) {
+          const h264 = videoCodecs.filter((c) => c.mimeType === "video/H264");
+          const rest = videoCodecs.filter((c) => c.mimeType !== "video/H264");
+          videoTransceiver.setCodecPreferences([...h264, ...rest]);
+        }
+      } catch {
+        // 기본 협상 순서 유지
+      }
+
+      const videoSender = pc
+        .getSenders()
+        .find((s) => s.track?.kind === "video");
+      if (videoSender) {
+        const params = videoSender.getParameters();
+        params.degradationPreference = "maintain-framerate";
+        videoSender.setParameters(params).catch(() => {});
       }
 
       const join = () => send({ type: "join-room", roomId });
@@ -385,10 +447,41 @@ function ActiveCall({
           }}
         />
       </div>
+      {state.status === "connected" && (
+        // 상단 상태 바 — 통화 시간(Design.md 12.2, 좌측)
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            left: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: "rgba(28,24,48,0.6)",
+            backdropFilter: "blur(8px)",
+            borderRadius: 999, // radius-full
+            padding: "6px 12px",
+            color: "#FFFFFF",
+            fontSize: 13, // caption
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#2FAE6B", // --color-success(아이콘 값)
+              display: "inline-block",
+            }}
+          />
+          {formatDuration(now - state.connectedAt)}
+        </div>
+      )}
       <div
         style={{
           position: "fixed",
-          top: 16,
+          top: state.status === "connected" ? 56 : 16,
           left: 16,
           color: "#FFFFFF",
           fontSize: 14,
