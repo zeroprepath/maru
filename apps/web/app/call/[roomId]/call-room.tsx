@@ -159,7 +159,6 @@ function ActiveCall({
   const { state, dispatch } = useCallStore();
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const startedAtRef = useRef(0);
   const remotePeerIdRef = useRef<PeerId | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [micOn, setMicOn] = useState(true);
@@ -169,13 +168,13 @@ function ActiveCall({
     stream.getTracks().forEach((t) => t.stop()); // 하드웨어 반납
     pcRef.current?.close();
     socketRef.current?.close();
-    // 대기실 승인을 기다린 시간까지 포함되지 않도록, "연결 시도 시작"(startedAtRef)이
-    // 아니라 실제로 P2P가 붙은 시각(state.connectedAt)을 기준으로 잰다 — 이 값은
-    // 양쪽에서 거의 동시(수십~수백ms 오차)라 호스트·게스트 표시값이 서로 어긋나지 않는다.
-    const connectedAt =
-      state.status === "connected" ? state.connectedAt : startedAtRef.current;
     dispatch({ type: reason });
-    const duration = Math.round((Date.now() - connectedAt) / 1000);
+    // 이 함수는 소켓 메시지 핸들러(첫 렌더의 effect)에서도 불리므로 렌더 시점의
+    // state 스냅샷은 오래됐을 수 있다 — 스토어의 최신 값에서 읽는다. durationMs는
+    // reduce()가 실제로 P2P가 붙은 시각(connectedAt) 기준으로 계산해 두 쪽이 일치한다.
+    const ended = useCallStore.getState().state;
+    const duration =
+      ended.status === "ended" ? Math.round(ended.durationMs / 1000) : 0;
     router.push(`/call/${roomId}/ended?duration=${duration}`);
   }
 
@@ -229,7 +228,6 @@ function ActiveCall({
       const socket = new WebSocket(WS_URL);
       pcRef.current = pc;
       socketRef.current = socket;
-      startedAtRef.current = Date.now();
       dispatch({ type: "JOIN", roomId });
 
       const send = (msg: ClientToServer) => socket.send(JSON.stringify(msg));
@@ -343,14 +341,20 @@ function ActiveCall({
 
       // 코덱은 기기 목록으로 분기하지 않고, 그 브라우저가 신고하는 capabilities 중
       // 하드웨어 가속되는 쪽(H.264)을 우선한다 — 없으면 자동으로 다음 순위로 폴백된다(ADR-022).
-      const videoTransceiver = pc
-        .getTransceivers()
-        .find((t) => t.sender.track?.kind === "video");
-      const videoCodecs = RTCRtpSender.getCapabilities("video")?.codecs ?? [];
-      if (videoTransceiver && videoCodecs.length > 0) {
-        const h264 = videoCodecs.filter((c) => c.mimeType === "video/H264");
-        const rest = videoCodecs.filter((c) => c.mimeType !== "video/H264");
-        videoTransceiver.setCodecPreferences([...h264, ...rest]);
+      // 최적화일 뿐이라 브라우저가 거부해도 기본 협상으로 계속한다(예외로 통화가 안 열리면 안 된다).
+      try {
+        const videoTransceiver = pc
+          .getTransceivers()
+          .find((t) => t.sender.track?.kind === "video");
+        const videoCodecs =
+          RTCRtpSender.getCapabilities("video")?.codecs ?? [];
+        if (videoTransceiver && videoCodecs.length > 0) {
+          const h264 = videoCodecs.filter((c) => c.mimeType === "video/H264");
+          const rest = videoCodecs.filter((c) => c.mimeType !== "video/H264");
+          videoTransceiver.setCodecPreferences([...h264, ...rest]);
+        }
+      } catch {
+        // 기본 협상 순서 유지
       }
 
       const videoSender = pc
